@@ -156,5 +156,34 @@ const std::map<std::string_view, const Stop *> TransportCatalogue::GetAllStopsIn
     return result;
 }
 
+const std::unordered_map<std::string_view, const Stop *>&
+TransportCatalogue::RawStopsIndex() const {
+    return stops_index_;
+}
+
+const std::unordered_map<StopsPointers, int, StopsPointers, StopsPointers>&
+TransportCatalogue::RawDistancesIndex() const {
+    return stops_distance_index_;
+}
+
+const std::unordered_map<std::string_view, std::set<std::string_view>> &
+TransportCatalogue::GetStopAndBuses() const {
+    return stop_and_buses_;
+}
+
+    size_t TransportCatalogue::GetNumberOfStopsOnAllRoutes() const {
+        size_t result = 0;
+
+        for (const auto& [bus, route] : routes_index_) {
+            result += route->route_stops.size();
+            if (route->type == RouteType::CIRCLE_ROUTE) {
+                --result;
+            }
+        }
+
+        return result;
+    }
+
+
 
 } // transport_catalogue namespace

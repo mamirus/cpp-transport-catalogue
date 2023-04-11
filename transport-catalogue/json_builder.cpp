@@ -5,11 +5,8 @@ namespace json {
 
     Builder& Builder::Value(Node val) {
         using namespace std::literals;
-        if ( !started_ ) {
+        if ( !IsStarted() ) {
             root_ = std::move(val);
-            started_ = true;
-            finished_ = true;
-
             return *this;
         }
 
@@ -31,14 +28,14 @@ namespace json {
             return *this;
         }
 
-        if ( finished_ ) {
+        if ( IsFinished() ) {
             throw std::logic_error("Error adding a value, Node is built already."s);
         }
 
         return *this;
     }
 
-    DictKeyContext Builder::Key(std::string key) {
+    Builder::DictKeyContext Builder::Key(std::string key) {
         using namespace std::literals;
         if ( !DoingDict()) {
             throw std::logic_error("Error: no dictionary started. Key defenition is out of scope."s);
@@ -52,15 +49,15 @@ namespace json {
         return DictKeyContext(*this);
     }
 
-    DictItemContext Builder::StartDict() {
+    Builder::DictItemContext Builder::StartDict() {
         using namespace std::literals;
 
-        if (finished_ || built_) {
+        if (IsFinished() || IsBuilt()) {
             throw std::logic_error("Error: node build is finished already"s);
         }
 
-        if (!started_) {
-            started_ = true;
+        if (!IsStarted()) {
+            //started_ = true;
             nodes_stack_.emplace_back(new Node(Dict{}));
             return DictItemContext(*this);
         }
@@ -85,7 +82,7 @@ namespace json {
 
     Builder& Builder::EndDict() {
         using namespace std::literals;
-        if (!started_ || finished_ || built_ || !DoingDict()) {
+        if (!IsStarted() || IsFinished() || IsBuilt() || !DoingDict()) {
             throw std::logic_error("Error in dictionary: no active dictionary."s);
         }
         Node* dict = nodes_stack_.back();
@@ -94,7 +91,7 @@ namespace json {
         if (nodes_stack_.empty()) { // root node, finish up
             root_ = std::move(*dict);
             delete dict;
-            finished_ = true;
+            //finished_ = true;
             return *this;
         }
 
@@ -119,15 +116,15 @@ namespace json {
         throw std::logic_error("Error in dictionary: we should not be here, EndDict method."s);
     }
 
-    ArrayItemContext Builder::StartArray() {
+    Builder::ArrayItemContext Builder::StartArray() {
         using namespace std::literals;
 
-        if (finished_ || built_) {
+        if (IsFinished() || IsBuilt()) {
             throw std::logic_error("Error: node build is finished already"s);
         }
 
-        if (!started_) {
-            started_ = true;
+        if (!IsStarted()) {
+            //started_ = true;
             nodes_stack_.emplace_back(new Node(Array{}));
             return ArrayItemContext(*this);
         }
@@ -152,7 +149,7 @@ namespace json {
 
     Builder& Builder::EndArray() {
         using namespace std::literals;
-        if (!started_ || finished_ || built_ || !DoingArray()) {
+        if (!IsStarted() || IsFinished() || IsBuilt() || !DoingArray()) {
             throw std::logic_error("Error in array: no active array."s);
         }
         Node* array = nodes_stack_.back();
@@ -161,7 +158,7 @@ namespace json {
         if (nodes_stack_.empty()) { // root node, finish up
             root_ = std::move(*array);
             delete array;
-            finished_ = true;
+            //finished_ = true;
             return *this;
         }
 
@@ -188,12 +185,12 @@ namespace json {
 
     Node Builder::Build() {
         using namespace std::literals;
-        if (!started_ || !finished_ || built_) {
+        if (!IsStarted() || !IsFinished() || IsBuilt()) {
             throw std::logic_error("Error in Build method: object is not ready."s);
         }
         built_ = true;
 
-        return root_;
+        return root_.value();
     }
 
     bool Builder::DoingDict() const {
@@ -208,49 +205,61 @@ namespace json {
         return nodes_stack_.back()->IsArray();
     }
 
+    bool Builder::IsStarted() {
+        return root_ || !nodes_stack_.empty();
+    }
 
-    DictKeyContext DictItemContext::Key(std::string key) {
+    bool Builder::IsFinished() {
+        return root_ && nodes_stack_.empty();
+    }
+
+    bool Builder::IsBuilt() {
+        return built_;
+    }
+
+
+    Builder::DictKeyContext Builder::DictItemContext::Key(std::string key) {
         builder_.Key(std::move(key));
         return DictKeyContext(builder_);
     }
 
-    Builder& DictItemContext::EndDict() {
+    Builder& Builder::DictItemContext::EndDict() {
         return builder_.EndDict();
     }
 
 
-    DictItemContext DictKeyContext::Value(Node val) {
+    Builder::DictItemContext Builder::DictKeyContext::Value(Node val) {
         builder_.Value(std::move(val));
         return DictItemContext(builder_);
     }
 
-    DictItemContext DictKeyContext::StartDict() {
+    Builder::DictItemContext Builder::DictKeyContext::StartDict() {
         builder_.StartDict();
         return DictItemContext(builder_);
     }
 
-    ArrayItemContext DictKeyContext::StartArray() {
+    Builder::ArrayItemContext Builder::DictKeyContext::StartArray() {
         builder_.StartArray();
         return ArrayItemContext(builder_);
     }
 
 
-    ArrayItemContext ArrayItemContext::Value(Node val) {
+    Builder::ArrayItemContext Builder::ArrayItemContext::Value(Node val) {
         builder_.Value(std::move(val));
         return ArrayItemContext(builder_);
     }
 
-    ArrayItemContext ArrayItemContext::StartArray() {
+    Builder::ArrayItemContext Builder::ArrayItemContext::StartArray() {
         builder_.StartArray();
         return ArrayItemContext(builder_);
     }
 
-    DictItemContext ArrayItemContext::StartDict() {
+    Builder::DictItemContext Builder::ArrayItemContext::StartDict() {
         builder_.StartDict();
         return DictItemContext(builder_);
     }
 
-    Builder& ArrayItemContext::EndArray() {
+    Builder& Builder::ArrayItemContext::EndArray() {
         return builder_.EndArray();
     }
 

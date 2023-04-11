@@ -11,9 +11,13 @@
 
 #include "geo.h"
 #include "domain.h"
+#include "graph.h"
 
 
 namespace transport_catalogue {
+
+const double MET_MIN_RATIO = 1000.00 / 60.00;
+
 
 
 struct StopsPointers {
@@ -35,7 +39,6 @@ private:
 };
 
 
-
 class TransportCatalogue {
 public:
     TransportCatalogue() = default;
@@ -50,6 +53,10 @@ public:
     int GetDistanceBetweenStops(std::string_view stop, std::string_view other_stop) const;
     const std::map<std::string_view, const BusRoute*> GetAllRoutesIndex() const;
     const std::map<std::string_view, const Stop*> GetAllStopsIndex() const;
+    const std::unordered_map<std::string_view, const Stop*>& RawStopsIndex() const;
+    size_t GetNumberOfStopsOnAllRoutes() const;
+    const std::unordered_map<StopsPointers, int, StopsPointers, StopsPointers>& RawDistancesIndex() const;
+    const std::unordered_map<std::string_view, std::set<std::string_view>>& GetStopAndBuses() const;
 
 private:
     std::deque<Stop> stops_;
