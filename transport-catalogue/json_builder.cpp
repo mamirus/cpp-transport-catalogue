@@ -2,266 +2,123 @@
 
 namespace json {
 
-
-    Builder& Builder::Value(Node val) {
-        using namespace std::literals;
-        if ( !IsStarted() ) {
-            root_ = std::move(val);
-            return *this;
+    Builder& Builder::Key(std::string key) {
+        if (root_ != nullptr) throw std::logic_error("calling Key-method for ready object");
+        if (nodes_stack_.back()->IsDict()) {
+            Node::Value str{std::move(key)};
+            nodes_.emplace_back(std::move(str));
+            nodes_stack_.push_back(&nodes_.back());
+        } else {
+            throw std::logic_error("calling Key-method in wrong place");
         }
-
-        if ( DoingDict() ) {
-            if ( !curr_key_ ) {
-                throw std::logic_error("Error building a dictionary, attempt to enter value before the key."s);
-            }
-            Dict& dict = nodes_stack_.back()->AsDict();
-            dict.emplace(curr_key_.value(), std::move(val));
-            curr_key_.reset();
-
-            return *this;
-        }
-
-        if ( DoingArray() ) {
-            Array& arr = nodes_stack_.back()->AsArray();
-            arr.push_back(std::move(val));
-
-            return *this;
-        }
-
-        if ( IsFinished() ) {
-            throw std::logic_error("Error adding a value, Node is built already."s);
-        }
-
         return *this;
     }
 
-    Builder::DictKeyContext Builder::Key(std::string key) {
-        using namespace std::literals;
-        if ( !DoingDict()) {
-            throw std::logic_error("Error: no dictionary started. Key defenition is out of scope."s);
+    Builder& Builder::Value(Node::Value value) {
+        if (root_ != nullptr) throw std::logic_error("calling Value-method for ready object");
+        if (root_ == nullptr && nodes_stack_.empty()) {
+            root_ = std::move(value);
+        } else if (nodes_stack_.back()->IsArray()) {
+            nodes_stack_.back()->AsArray().emplace_back(std::move(value));
+        } else if (nodes_stack_.back()->IsString()) {
+            Node& node_ref =*nodes_stack_.back();
+            nodes_stack_.pop_back();
+            nodes_stack_.back()->AsDict().insert({node_ref.AsString(), std::move(value)});
+        } else {
+            throw std::logic_error("calling Value-method in wrong place");
         }
-        if ( curr_key_ ) {
-            throw std::logic_error("Error in dictionary: key is already declared. Please enter value"s);
-        }
-
-        curr_key_ = std::move(key);
-
-        return DictKeyContext(*this);
+        return *this;
     }
 
     Builder::DictItemContext Builder::StartDict() {
-        using namespace std::literals;
-
-        if (IsFinished() || IsBuilt()) {
-            throw std::logic_error("Error: node build is finished already"s);
-        }
-
-        if (!IsStarted()) {
-            //started_ = true;
-            nodes_stack_.emplace_back(new Node(Dict{}));
-            return DictItemContext(*this);
-        }
-
-        if (DoingArray()) {
-            nodes_stack_.emplace_back(new Node(Dict{}));
-            return DictItemContext(*this);
-        }
-
-        if (DoingDict()) {
-            if (!curr_key_){
-                throw std::logic_error("Error in dictionary: key is not declared, can not start another dictionary as a value."s);
-            }
-            nodes_stack_.emplace_back(new Node(curr_key_.value()));
-            curr_key_.reset();
-            nodes_stack_.emplace_back(new Node(Dict{}));
-            return DictItemContext(*this);
-        }
-
-        throw std::logic_error("Error in dictionary: we should not be here, StartDict method."s);
-    }
-
-    Builder& Builder::EndDict() {
-        using namespace std::literals;
-        if (!IsStarted() || IsFinished() || IsBuilt() || !DoingDict()) {
-            throw std::logic_error("Error in dictionary: no active dictionary."s);
-        }
-        Node* dict = nodes_stack_.back();
-        nodes_stack_.pop_back();
-
-        if (nodes_stack_.empty()) { // root node, finish up
-            root_ = std::move(*dict);
-            delete dict;
-            //finished_ = true;
-            return *this;
-        }
-
-        if ( Node* node = nodes_stack_.back(); node->IsString() ) { // this dict is a value in previously declared Dictionary.
-            std::string key = node->AsString();
-            nodes_stack_.pop_back();
-            delete node;
-            node = nodes_stack_.empty() ? nullptr : nodes_stack_.back();
-            if (!node || !node->IsDict()){
-                throw std::logic_error("Error in dictionary: structural error in constructing previous dictionary."s);
-            }
-            node->AsDict().emplace(key, std::move(*dict));
-            delete dict;
-            return *this;
-        }
-
-        if ( Node* node = nodes_stack_.back(); node->IsArray() ) { // this Dict is a value in array.
-            node->AsArray().emplace_back(std::move(*dict));
-            delete dict;
-            return *this;
-        }
-        throw std::logic_error("Error in dictionary: we should not be here, EndDict method."s);
+        StartData(Dict{});
+        return {*this};
     }
 
     Builder::ArrayItemContext Builder::StartArray() {
-        using namespace std::literals;
+        StartData(Array{});
+        return {*this};
+    }
 
-        if (IsFinished() || IsBuilt()) {
-            throw std::logic_error("Error: node build is finished already"s);
+    Builder& Builder::EndDict() {
+        if (nodes_stack_.empty()) throw std::logic_error("calling EndDict-method for ready or empty object");
+        if (nodes_stack_.back()->IsDict()) {
+            EndData();
+            return *this;
+        } else {
+            throw std::logic_error("calling EndDict-method in wrong place");
         }
-
-        if (!IsStarted()) {
-            //started_ = true;
-            nodes_stack_.emplace_back(new Node(Array{}));
-            return ArrayItemContext(*this);
-        }
-
-        if (DoingArray()) {
-            nodes_stack_.emplace_back(new Node(Array{}));
-            return ArrayItemContext(*this);
-        }
-
-        if (DoingDict()) {
-            if (!curr_key_){
-                throw std::logic_error("Error in dictionary: key is not declared, can not start array as a value."s);
-            }
-            nodes_stack_.emplace_back(new Node(curr_key_.value()));
-            curr_key_.reset();
-            nodes_stack_.emplace_back(new Node(Array{}));
-            return ArrayItemContext(*this);
-        }
-
-        throw std::logic_error("Error in array: we should not be here, StartArray method."s);
     }
 
     Builder& Builder::EndArray() {
-        using namespace std::literals;
-        if (!IsStarted() || IsFinished() || IsBuilt() || !DoingArray()) {
-            throw std::logic_error("Error in array: no active array."s);
+        if (nodes_stack_.empty()) throw std::logic_error("calling EndArray-method for ready or empty object");
+        if (nodes_stack_.back()->IsArray()) {
+            EndData();
+            return *this;
+        } else {
+            throw std::logic_error("calling EndArray-method in wrong place");
         }
-        Node* array = nodes_stack_.back();
+    }
+
+    json::Node Builder::Build() {
+        if (nodes_stack_.empty() && root_ != nullptr) {
+            return root_;
+        } else {
+            throw std::logic_error("calling build when object is not ready");
+        }
+    }
+
+    void Builder::EndData() {
+        Node& node_ref = *nodes_stack_.back();
         nodes_stack_.pop_back();
-
-        if (nodes_stack_.empty()) { // root node, finish up
-            root_ = std::move(*array);
-            delete array;
-            //finished_ = true;
-            return *this;
-        }
-
-        if ( Node* node = nodes_stack_.back(); node->IsString() ) { // this array is a value in previously declared Dictionary.
-            std::string key = node->AsString();
+        if (nodes_stack_.empty()) {
+            root_ = std::move(node_ref);
+        } else if (nodes_stack_.back()->IsArray()) {
+            nodes_stack_.back()->AsArray().emplace_back(std::move(node_ref));
+        } else if (nodes_stack_.back()->IsString()) {
+            Node& str_node_ref = *nodes_stack_.back();
             nodes_stack_.pop_back();
-            delete node;
-            node = nodes_stack_.empty() ? nullptr : nodes_stack_.back();
-            if (!node || !node->IsDict()){
-                throw std::logic_error("Error in dictionary: structural error in constructing previous dictionary."s);
-            }
-            node->AsDict().emplace(key, std::move(*array));
-            delete array;
-            return *this;
+            nodes_stack_.back()->AsDict().insert({str_node_ref.AsString(), std::move(node_ref)});
         }
-
-        if ( Node* node = nodes_stack_.back(); node->IsArray() ) { // this array is a value in previously declared array.
-            node->AsArray().emplace_back(std::move(*array));
-            delete array;
-            return *this;
-        }
-        throw std::logic_error("Error in dictionary: we should not be here, EndArray method."s);
     }
 
-    Node Builder::Build() {
-        using namespace std::literals;
-        if (!IsStarted() || !IsFinished() || IsBuilt()) {
-            throw std::logic_error("Error in Build method: object is not ready."s);
-        }
-        built_ = true;
-
-        return root_.value();
+    Builder& Builder::ItemContext::EndDict() {
+        builder_.EndDict();
+        return builder_;
     }
 
-    bool Builder::DoingDict() const {
-        if (nodes_stack_.empty()) return false;
-
-        return nodes_stack_.back()->IsDict();
+    Builder& Builder::ItemContext::EndArray() {
+        builder_.EndArray();
+        return builder_;
     }
 
-    bool Builder::DoingArray() const {
-        if (nodes_stack_.empty()) return false;
-
-        return nodes_stack_.back()->IsArray();
+    Builder::DictItemContext Builder::ItemContext::StartDict() {
+        builder_.StartDict();
+        return {*this};
     }
 
-    bool Builder::IsStarted() {
-        return root_ || !nodes_stack_.empty();
+    Builder::ArrayItemContext Builder::ItemContext::StartArray() {
+        builder_.StartArray();
+        return {*this};
     }
 
-    bool Builder::IsFinished() {
-        return root_ && nodes_stack_.empty();
+    Builder::ValueAfterArrayContext Builder::ItemContext::Value(Node::Value value) {
+        builder_.Value(std::move(value));
+        return {*this};
     }
 
-    bool Builder::IsBuilt() {
-        return built_;
+    Builder::ValueAfterKeyContext Builder::KeyItemContext::Value(Node::Value value) {
+        builder_.Value(std::move(value));
+        return {*this};
     }
 
-
-    Builder::DictKeyContext Builder::DictItemContext::Key(std::string key) {
+    Builder::KeyItemContext Builder::ValueAfterKeyContext::Key(std::string key) {
         builder_.Key(std::move(key));
-        return DictKeyContext(builder_);
+        return {*this};
     }
 
-    Builder& Builder::DictItemContext::EndDict() {
-        return builder_.EndDict();
+    Builder::KeyItemContext Builder::DictItemContext::Key(std::string key) {
+        builder_.Key(std::move(key));
+        return {*this};
     }
-
-
-    Builder::DictItemContext Builder::DictKeyContext::Value(Node val) {
-        builder_.Value(std::move(val));
-        return DictItemContext(builder_);
-    }
-
-    Builder::DictItemContext Builder::DictKeyContext::StartDict() {
-        builder_.StartDict();
-        return DictItemContext(builder_);
-    }
-
-    Builder::ArrayItemContext Builder::DictKeyContext::StartArray() {
-        builder_.StartArray();
-        return ArrayItemContext(builder_);
-    }
-
-
-    Builder::ArrayItemContext Builder::ArrayItemContext::Value(Node val) {
-        builder_.Value(std::move(val));
-        return ArrayItemContext(builder_);
-    }
-
-    Builder::ArrayItemContext Builder::ArrayItemContext::StartArray() {
-        builder_.StartArray();
-        return ArrayItemContext(builder_);
-    }
-
-    Builder::DictItemContext Builder::ArrayItemContext::StartDict() {
-        builder_.StartDict();
-        return DictItemContext(builder_);
-    }
-
-    Builder& Builder::ArrayItemContext::EndArray() {
-        return builder_.EndArray();
-    }
-
-
-} // namespace json
+}

@@ -1,97 +1,100 @@
 #pragma once
 
+#include <iostream>
+#include <vector>
+#include <deque>
 #include "json.h"
-#include <optional>
-#include <string>
 
 namespace json {
 
-    // Комметарий по "Красному" замечанияю:
-    // п.1 - сделано.
-    // п.2 - хотел бы оставить как есть. Я изначально планировал сделать так. Однако, количество кода получается больше.
-    //
-    //      К тому же, некоторые одинаковые методы в разных классах должны вернуть объект разных классов. В этом нет проблемы, можно
-    //      реализовать шаблонный класс и метод, наподобие, как это реализовано в svg::PathProps.
-    //
-    //      И ещё, главное здесь - публичное наследование от род.класса со всеми методами невозможно,
-    //      т.к. тогда все методы будут доступны, а это недопустимо и противоречит самой идее этих классов.
-    //      Нужно будет делать приватное наследование и потом всё равно повторять те-же методы
-    //      и обращаться к методам род.класса - кода будет больше и дублирования тоже!
-    //
-    //      По сути, таким общим классом сейчас служит Builder, эти классы пользуются его методами!
-
-
     class Builder {
     private:
-        std::optional<Node> root_;
+        class DictItemContext;
+        class ArrayItemContext;
+        class KeyItemContext;
+        class ValueAfterArrayContext;
+        class ValueAfterKeyContext;
+        class ItemContext;
+
+        template<typename T>
+        void StartData(T obj);
+        void EndData();
+        Node root_ = nullptr;
         std::vector<Node*> nodes_stack_;
-        std::optional<std::string> curr_key_;
-
-        bool IsStarted();
-        bool IsFinished();
-        bool IsBuilt();
-
-//        bool started_ = false;
-//        bool finished_ = false;
-        bool built_ = false;
-
+        std::deque<Node> nodes_;
 
     public:
-        class DictItemContext;
-        class DictKeyContext;
-        class ArrayItemContext;
-
-        class DictItemContext {
-        public:
-            explicit DictItemContext(Builder& builder) : builder_(builder) {
-            }
-            DictKeyContext Key(std::string key);
-            Builder& EndDict();
-        private:
-            Builder& builder_;
-        };
-
-        class DictKeyContext {
-        public:
-            explicit DictKeyContext(Builder& builder) : builder_(builder) {
-            }
-            DictItemContext Value(Node val);
-            DictItemContext StartDict();
-            ArrayItemContext StartArray();
-        private:
-            Builder& builder_;
-        };
-
-        class ArrayItemContext {
-        public:
-            explicit ArrayItemContext(Builder& builder) : builder_(builder) {
-            }
-
-            ArrayItemContext Value(Node val);
-            ArrayItemContext StartArray();
-            DictItemContext StartDict();
-            Builder& EndArray();
-
-        private:
-            Builder& builder_;
-        };
-        Builder() = default;
-
-        Builder& Value(Node val);
-
-        DictKeyContext Key(std::string key);
-
+        Builder& Key(std::string key);
+        Builder& Value(Node::Value value);
         DictItemContext StartDict();
-        Builder& EndDict();
-
         ArrayItemContext StartArray();
+        Builder& EndDict();
         Builder& EndArray();
-
-        Node Build();
-
-    private:
-        [[nodiscard]] bool DoingDict() const;
-        [[nodiscard]] bool DoingArray() const;
+        json::Node Build();
 
     };
+
+    class Builder::ItemContext {
+    public:
+        ItemContext(Builder& builder) : builder_(builder) {};
+        ValueAfterArrayContext Value(Node::Value value);
+        DictItemContext StartDict();
+        ArrayItemContext StartArray();
+        Builder& EndDict();
+        Builder& EndArray();
+    protected:
+        Builder& builder_;
+    };
+
+    class Builder::ValueAfterKeyContext : public ItemContext {
+    public:
+        KeyItemContext Key(std::string key);
+        ValueAfterArrayContext Value(Node::Value value) = delete;
+        Builder& EndArray() = delete;
+        DictItemContext StartDict() = delete;
+        ArrayItemContext StartArray() = delete;
+    };
+
+    class Builder::ValueAfterArrayContext : public ItemContext {
+    public:
+        Builder& EndDict() = delete;
+    };
+
+    class Builder::KeyItemContext : public ItemContext {
+    public:
+        ValueAfterKeyContext Value(Node::Value value);
+        Builder& EndDict() = delete;
+        Builder& EndArray() = delete;
+    };
+
+    class Builder::DictItemContext : public ItemContext {
+    public:
+        KeyItemContext Key(std::string key);
+        ValueAfterArrayContext Value(Node::Value value) = delete;
+        Builder& EndArray() = delete;
+        DictItemContext StartDict() = delete;
+        ArrayItemContext StartArray() = delete;
+    };
+
+    class Builder::ArrayItemContext : public ItemContext {
+    public:
+        Builder& EndDict() = delete;
+    };
+
+    template<typename T>
+    void Builder::StartData(T obj) {
+        std::string str;
+        if constexpr (std::is_same<T, Array>::value) {
+            str = "Array";
+        } else {
+            str = "Dict";
+        }
+        if (root_ != nullptr) throw std::logic_error("calling Start" + str + "-method for ready object");
+        if (nodes_stack_.empty() || nodes_stack_.back()->IsArray() || nodes_stack_.back()->IsString()) {
+            nodes_.emplace_back(obj);
+            nodes_stack_.push_back(&nodes_.back());
+        } else {
+            throw std::logic_error("calling Start" + str + "-method in wrong place");
+        }
+    }
 }

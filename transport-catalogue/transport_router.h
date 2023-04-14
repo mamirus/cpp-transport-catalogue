@@ -1,86 +1,83 @@
 #pragma once
+
 #include "transport_catalogue.h"
+#include "router.h"
+#include "graph.h"
+#include <memory>
 
-
-struct RoutingSettings {
-    int bus_wait_time;
-    double bus_velocity;
-};
-
-struct TwoStopsLink {
-    std::string_view bus_name = {};
-    graph::VertexId stop_from = {};
-    graph::VertexId stop_to = {};
-    size_t number_of_stops = {};
-
-    explicit TwoStopsLink(std::string_view bus, graph::VertexId from, graph::VertexId to, size_t num) :
-            bus_name(bus), stop_from(from), stop_to(to), number_of_stops(num) {
-    }
-    TwoStopsLink() = default;
-
-    size_t operator()(const TwoStopsLink& sor) const {
-        return hasher_num_(number_of_stops) + 43 * hasher_num_(sor.stop_from) +
-            43 * 43 * hasher_num_(sor.stop_to) + 43 * 43 * 43 * hasher_(bus_name);
-    }
-    bool operator()(const TwoStopsLink& lhs, const TwoStopsLink& rhs) const {
-        return lhs.bus_name == rhs.bus_name && lhs.stop_from == rhs.stop_from
-                && lhs.stop_to == rhs.stop_to && lhs.number_of_stops == rhs.number_of_stops;
-    }
-
-private:
-    std::hash<size_t> hasher_num_;
-    std::hash<std::string_view> hasher_;
-};
-
-
-class TransportCatalogueGraph : public graph::DirectedWeightedGraph<double> {
-public:
-    struct StopOnRoute {
-        size_t stop_number;
-        std::string_view stop_name;
-        std::string_view bus_name;
-
-        explicit StopOnRoute(size_t num, std::string_view stop, std::string_view bus) : stop_number(num), stop_name(stop), bus_name(bus) {
-        }
-        StopOnRoute() = default;
-
-        size_t operator()(const StopOnRoute& sor) const {
-            return hasher_num_(stop_number) + 43 * hasher_(sor.stop_name) + 43 * 43 * hasher_(sor.bus_name);
-        }
-        bool operator()(const StopOnRoute& lhs, const StopOnRoute& rhs) const {
-            return lhs.stop_name == rhs.stop_name && lhs.bus_name == rhs.bus_name && lhs.stop_number == rhs.stop_number;
-        }
-    private:
-        std::hash<size_t> hasher_num_;
-        std::hash<std::string_view> hasher_;
+namespace transport_router {
+    struct RoutingSettings {
+        double bus_wait_time_ = 0.0;
+        double bus_velocity_ = 0.0;
     };
 
-public:
-    TransportCatalogueGraph(const transport_catalogue::TransportCatalogue& tc, RoutingSettings rs);
-    ~TransportCatalogueGraph() = default;
-    graph::VertexId GetStopVertexId(std::string_view stop_name) const;
-    const StopOnRoute& GetStopById(graph::VertexId id) const;
-    const TwoStopsLink& GetLinkById(graph::EdgeId id) const;
-    double GetBusWaitingTime() const;
+    enum class EdgeType {
+        WAIT,
+        BUS
+    };
 
-private:
-    const transport_catalogue::TransportCatalogue& tc_;
-    RoutingSettings rs_;
-    graph::EdgeId edge_count_ = 0;
+    struct EdgeDescription {
+        EdgeType type_;
+        std::string_view edge_name_;
+        double time_ = 0.0;
+        std::optional<int> span_count_ = 0;
+    };
 
-    std::unordered_map<StopOnRoute, graph::VertexId , StopOnRoute, StopOnRoute> stop_to_vertex_;
-    std::unordered_map<size_t , StopOnRoute> vertex_to_stop_;
-    graph::VertexId vertex_id_count_ = 0;
+    using Router = graph::Router<double>;
+    using Graph = graph::DirectedWeightedGraph<double>;
+    using EdgeDescriptions = std::vector<EdgeDescription>;
 
-    std::unordered_map<TwoStopsLink, graph::EdgeId, TwoStopsLink, TwoStopsLink> stoplink_to_edge_;
-    std::unordered_map<graph::EdgeId, TwoStopsLink> edge_to_stoplink_;
+    class TransportRouter {
+    public:
+        TransportRouter(RoutingSettings settings, const transport_catalogue::TransportCatalogue& transport_catalogue)
+        : routing_settings_(settings),
+          transport_catalogue_(transport_catalogue),
+          graph_(std::make_unique<Graph>(transport_catalogue_.GetAmountOfUsedStops() * 2)),
+          router_(nullptr)
+        {
+            FillGraph();
+            router_ = std::make_unique<Router>(*graph_);
+        }
 
-    graph::VertexId RegisterStop(const StopOnRoute& stop);
-    graph::EdgeId StoreLink(const TwoStopsLink& link, graph::EdgeId edge);
-    std::optional<graph::EdgeId> CheckLink(const TwoStopsLink& link) const;
+        std::optional<EdgeDescriptions> BuildRoute(std::string_view stop_from, std::string_view stop_to) const;
 
-    void AddStopsOfReturnRoute(const transport_catalogue::BusRoute* bus_route);
-    void AddStopsOfCircleRoute(const transport_catalogue::BusRoute* bus_route);
+    private:
+        RoutingSettings routing_settings_;
+        const transport_catalogue::TransportCatalogue& transport_catalogue_;
+        std::unique_ptr<Graph> graph_;
+        std::unique_ptr<Router> router_;
+        std::unordered_map<std::string_view, std::pair<size_t, size_t>> pairs_of_vertices_for_each_stop;
+        EdgeDescriptions edges_descriptions_;
 
-    double CalculateTimeForDistance(int distance) const;
-};
+        constexpr static const double METERS_PER_KM = 1000.0;
+        constexpr static const double MIN_PER_HOUR = 60.0;
+
+        void FillGraph();
+        void AddWaitEdgesToGraph();
+
+        template<typename InputIterator>
+        void AddBusEdgesToGraph(InputIterator first, InputIterator last, std::string_view bus_name);
+    };
+
+    template<typename InputIterator>
+    void TransportRouter::AddBusEdgesToGraph(InputIterator first, InputIterator last, std::string_view bus_name) {
+        for (; std::distance(first, last) != 1; first++) {
+            graph::VertexId from_id = pairs_of_vertices_for_each_stop.at((*first)->name_).second;
+            const domain::Stop* from_stop = *first;
+            double time = 0.0;
+            InputIterator next_after_first = first;
+            for (std::advance(next_after_first, 1); next_after_first != last; next_after_first++) {
+                graph::VertexId to_id = pairs_of_vertices_for_each_stop.at((*next_after_first)->name_).first;
+                time += transport_catalogue_.GetDistancesBetweenStops(from_stop, *next_after_first) / METERS_PER_KM / routing_settings_.bus_velocity_ * MIN_PER_HOUR;
+                graph_->AddEdge({from_id, to_id, time});
+                from_stop = *next_after_first;
+                edges_descriptions_.push_back({
+                        EdgeType::BUS,
+                        bus_name,
+                        time,
+                        std::distance(first, next_after_first)
+                });
+            }
+        }
+    }
+}

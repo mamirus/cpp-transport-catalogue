@@ -2,66 +2,47 @@
 
 #include "json.h"
 #include "transport_catalogue.h"
+#include "request_handler.h"
 #include "map_renderer.h"
-#include "domain.h"
-#include "router.h"
 #include "transport_router.h"
 #include <vector>
+#include <unordered_set>
+#include <utility>
 
-const std::string BASE_DATA = "base_requests";
-const std::string USER_REQUESTS = "stat_requests";
-const std::string RENDER_SETTINGS = "render_settings";
-const std::string ROUTING_SETTINGS = "routing_settings";
+namespace reader {
+    using namespace std::string_literals;
 
+    struct SortedJSONQueries {
+        std::unordered_set<const json::Dict*> stops_queries_;
+        std::unordered_set<const json::Dict*> buses_queries_;
+        transport_router::RoutingSettings routing_settings_;
+        std::vector<const json::Dict*> stat_requests_;
+        renderer::RenderSettings render_settings_;
+    };
 
-struct BusRouteJson {
-    std::string bus_name;
-    transport_catalogue::RouteType type;
-    std::vector<std::string> route_stops;
-};
+    json::Document ReadJSON(std::istream& input);
 
+    void ParseBaseRequests(const json::Node& data, SortedJSONQueries& queries);
+    void ParseStatRequests(const json::Node& data, SortedJSONQueries& queries);
+    void ParseRenderSettings(const json::Node& data, SortedJSONQueries& queries);
+    void ParseRoutingSettings(const json::Node& data, SortedJSONQueries& queries);
 
-using BaseRequest = std::variant<std::monostate, transport_catalogue::StopWithDistances, BusRouteJson>;
+    SortedJSONQueries ParseJSON(json::Document& doc);
 
+    void AddStopsFromJSON(transport_catalogue::TransportCatalogue& transport_catalogue, std::unordered_set<const json::Dict*>& queries);
+    void AddStopsDistancesFromJSON(transport_catalogue::TransportCatalogue& transport_catalogue, std::unordered_set<const json::Dict*>& queries);
+    void AddBusesFromJSON(transport_catalogue::TransportCatalogue& transport_catalogue, std::unordered_set<const json::Dict*>& queries);
 
-class JsonReader {
-public:
-    explicit JsonReader(transport_catalogue::TransportCatalogue& tc) : transport_catalogue_(tc) {
-    }
+    svg::Point MakeOffset(const json::Array& values);
+    svg::Color MakeColorForSVG(const json::Node& node);
+    std::vector<svg::Color> MakeArrayOfColors(const json::Array& array);
 
-    size_t ReadJson(std::istream& input);
+    void FillTransportCatalogue(transport_catalogue::TransportCatalogue& transport_catalogue,
+                                std::unordered_set<const json::Dict*>& stop_queries,
+                                std::unordered_set<const json::Dict*>& bus_queries);
 
-    size_t ReadJsonToTransportCatalogue(std::istream& input);
-    size_t QueryTcWriteJsonToStream(std::ostream& out);
-
-    size_t ReadJsonQueryTcWriteJsonToStream(std::istream & input, std::ostream& out);
-
-    [[nodiscard]] RendererSettings GetRendererSetting() const;
-    RoutingSettings GetRoutingSettings() const;
-
-
-
-private:
-    transport_catalogue::TransportCatalogue& transport_catalogue_;
-    std::vector<json::Document> root_;
-    std::vector<transport_catalogue::StopWithDistances> raw_stops_;
-    std::vector<BusRouteJson> raw_buses_;
-    RoutingSettings routing_settings_;
-    std::unique_ptr<TransportCatalogueGraph> graph_ptr_;
-    std::unique_ptr<graph::Router<double>> router_ptr_;
-
-    BaseRequest ParseDataNode(const json::Node& node) const;
-    size_t ParseJsonToRawData();
-    bool FillTransportCatalogue();
-    json::Node ProcessOneUserRequestNode(const json::Node& user_request);
-    std::optional<geo::Coordinates> ParseCoordinates(const json::Dict& dict) const;
-    BaseRequest ParseDataStop(const json::Dict& dict) const;
-    BaseRequest ParseDataBus(const json::Dict& dict) const;
-    json::Node GenerateMapNode(int id) const;
-    json::Node GenerateBusNode(int id, std::string& name) const;
-    json::Node GenerateStopNode(int id, std::string& name) const;
-    json::Node GenerateRouteNode(int id, std::string_view from, std::string_view to) const;
-};
-
-svg::Color ParseColor(const json::Node& node);
-inline json::Node GetErrorNode(int id);
+    json::Node ProcessStopQuery(RequestHandler& request_handler, const json::Dict* query);
+    json::Node ProcessBusQuery(RequestHandler& request_handler, const json::Dict* query);
+    json::Node ProcessRouteQuery(RequestHandler& request_handler, const json::Dict* query);
+    json::Document ProcessStatRequests(RequestHandler& request_handler, std::vector<const json::Dict*>& stat_queries);
+}

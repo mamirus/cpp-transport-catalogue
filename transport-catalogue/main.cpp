@@ -1,14 +1,14 @@
-#include <iostream>
-#include "transport_catalogue.h"
 #include "json_reader.h"
-#include "map_renderer.h"
-
-using namespace transport_catalogue;
-using namespace std::literals;
+#include "request_handler.h"
+#include <iostream>
 
 int main() {
-    TransportCatalogue tc;
-    JsonReader reader(tc);
-    reader.ReadJsonToTransportCatalogue(std::cin);
-    reader.QueryTcWriteJsonToStream(std::cout);
+    transport_catalogue::TransportCatalogue transport_catalogue;
+    auto doc{reader::ReadJSON(std::cin)};
+    auto queries{reader::ParseJSON(doc)};
+    reader::FillTransportCatalogue(transport_catalogue, queries.stops_queries_, queries.buses_queries_);
+    transport_catalogue.SetArrayOfUsedStops();
+    RequestHandler request_handler{transport_catalogue, queries.render_settings_, queries.routing_settings_};
+    json::Document response{reader::ProcessStatRequests(request_handler, queries.stat_requests_)};
+    json::Print(response, std::cout);
 }

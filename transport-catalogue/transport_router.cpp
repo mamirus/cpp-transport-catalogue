@@ -1,158 +1,49 @@
 #include "transport_router.h"
 
+namespace transport_router {
+    std::optional<EdgeDescriptions> TransportRouter::BuildRoute(std::string_view stop_from, std::string_view stop_to) const {
+        EdgeDescriptions result;
 
-TransportCatalogueGraph::TransportCatalogueGraph(const transport_catalogue::TransportCatalogue& tc, RoutingSettings rs):
-        graph::DirectedWeightedGraph<double>(tc.RawStopsIndex().size()), tc_(tc), rs_(rs) {
+        if (stop_from == stop_to) return result;
+        if (pairs_of_vertices_for_each_stop.count(stop_from) == 0
+            || pairs_of_vertices_for_each_stop.count(stop_to) == 0) return std::nullopt;
 
-    const auto& routes_index = tc_.GetAllRoutesIndex(); // Get all bus routes for all stops on routes
+        graph::VertexId from_id = pairs_of_vertices_for_each_stop.at(stop_from).first;
+        graph::VertexId to = pairs_of_vertices_for_each_stop.at(stop_to).first;
+        std::optional<Router::RouteInfo> route = router_->BuildRoute(from_id, to);
 
-    // Register all stops that we have in catalogue as vertices
-    for (const auto& [stop_name, stop_ptr] : tc_.RawStopsIndex()) {
-        StopOnRoute stop {0, stop_name, {}};
-        RegisterStop(stop);
+        if (!route.has_value()) return std::nullopt;
+
+        for (graph::VertexId id : route.value().edges) {
+            result.push_back(edges_descriptions_[id]);
+        }
+        return result;
     }
 
-    // iterate for all routes
-    for (const auto& [_, bus_route] : routes_index) {
-        if (bus_route->type == transport_catalogue::RouteType::RETURN_ROUTE) {
-            AddStopsOfReturnRoute(bus_route);
-        } else {
-            AddStopsOfCircleRoute(bus_route);
+    void TransportRouter::FillGraph() {
+        AddWaitEdgesToGraph();
+        for (auto [name, bus_ptr] : transport_catalogue_.GetBusIndexes()) {
+            AddBusEdgesToGraph(bus_ptr->stops_.begin(), bus_ptr->stops_.end(), name);
+            if (bus_ptr->type_ == domain::BusType::REVERSE) {
+                AddBusEdgesToGraph(bus_ptr->stops_.rbegin(), bus_ptr->stops_.rend(), name);
+            }
         }
     }
-}
 
-void TransportCatalogueGraph::AddStopsOfReturnRoute(const transport_catalogue::BusRoute *bus_route) {
-    // iterate all stops in a route
-    for (auto start = bus_route->route_stops.begin(); start != bus_route->route_stops.end(); ++start) {
-        size_t stop_distance = 1; // count between stops
-        int accumulated_distance_direct = 0;
-        int accumulated_distance_reverse = 0;
-
-        const auto wait_time_at_stop = static_cast<double>(rs_.bus_wait_time);
-
-        auto from_id = GetStopVertexId((*start)->stop_name);
-        for (auto first = start, second = start + 1; second != bus_route->route_stops.end(); ++first, ++second) {
-            auto to_id = GetStopVertexId((*second)->stop_name);
-
-            // make direct link and register Edge
-            TwoStopsLink direct_link(bus_route->bus_name, from_id, to_id, stop_distance);
-            const int direct_distance = tc_.GetDistanceBetweenStops((*first)->stop_name, (*second)->stop_name);
-            accumulated_distance_direct += direct_distance;
-            const double direct_link_time = wait_time_at_stop + CalculateTimeForDistance(accumulated_distance_direct); // travel time between 2 stops
-            const auto direct_edge_id = AddEdge({from_id, to_id, direct_link_time});
-            StoreLink(direct_link, direct_edge_id);
-
-            // make reverse link and register Edge
-            TwoStopsLink reverse_link(bus_route->bus_name, to_id, from_id, stop_distance);
-            const int reverse_distance = tc_.GetDistanceBetweenStops((*second)->stop_name, (*first)->stop_name);
-            accumulated_distance_reverse += reverse_distance;
-            const double reverse_link_time = wait_time_at_stop + CalculateTimeForDistance(accumulated_distance_reverse); // travel time between 2 stops
-            const auto reverse_edge_id = AddEdge({to_id, from_id, reverse_link_time});
-            StoreLink(reverse_link, reverse_edge_id);
-
-            ++stop_distance;
-
-            edge_count_ = reverse_edge_id;
+    void TransportRouter::AddWaitEdgesToGraph() {
+        graph::VertexId from_id = 0;
+        graph::VertexId to_id = 1;
+        for (std::string_view name: transport_catalogue_.GetUsedStopNames()) {
+            graph_->AddEdge({from_id, to_id, routing_settings_.bus_wait_time_});
+            pairs_of_vertices_for_each_stop.insert({name, {from_id, to_id}});
+            edges_descriptions_.push_back({
+                EdgeType::WAIT,
+                name,
+                routing_settings_.bus_wait_time_,
+                std::nullopt
+            });
+            from_id += 2;
+            to_id += 2;
         }
     }
-}
-
-void TransportCatalogueGraph::AddStopsOfCircleRoute(const transport_catalogue::BusRoute *bus_route) {
-    // iterate all stops in a route
-    for (auto start = bus_route->route_stops.begin(); start != bus_route->route_stops.end(); ++start) {
-        size_t stop_distance = 1; // count between stops
-        int accumulated_distance_direct = 0;
-
-        const auto wait_time_at_stop = static_cast<double>(rs_.bus_wait_time);
-
-        auto from_id = GetStopVertexId((*start)->stop_name);
-        for (auto first = start, second = start + 1; second != bus_route->route_stops.end(); ++first, ++second) {
-            auto to_id = GetStopVertexId((*second)->stop_name);
-
-            // make direct link and register Edge
-            TwoStopsLink direct_link(bus_route->bus_name, from_id, to_id, stop_distance);
-            const int direct_distance = tc_.GetDistanceBetweenStops((*first)->stop_name, (*second)->stop_name);
-            accumulated_distance_direct += direct_distance;
-            const double direct_link_time = wait_time_at_stop + CalculateTimeForDistance(accumulated_distance_direct); // travel time between 2 stops
-            const auto direct_edge_id = AddEdge({from_id, to_id, direct_link_time});
-            StoreLink(direct_link, direct_edge_id);
-
-            ++stop_distance;
-
-            edge_count_ = direct_edge_id;
-        }
-    }
-}
-
-
-
-graph::VertexId TransportCatalogueGraph::RegisterStop(const StopOnRoute& stop) {
-    auto iter = stop_to_vertex_.find(stop);
-    if (iter != stop_to_vertex_.end()) {
-        return iter->second; // return the stop vertex number, it already exists in the map
-    }
-
-    auto result = vertex_id_count_;
-
-    stop_to_vertex_[stop] = vertex_id_count_;
-    vertex_to_stop_[vertex_id_count_] = stop;
-    ++vertex_id_count_;
-
-    return result;
-}
-
-std::optional<graph::EdgeId> TransportCatalogueGraph::CheckLink(const TwoStopsLink &link) const {
-    auto iter = stoplink_to_edge_.find(link);
-
-    if (iter != stoplink_to_edge_.end()) {
-        return iter->second; // return the stop vertex number, it already exists in the map
-    }
-
-    return {};
-}
-
-graph::EdgeId TransportCatalogueGraph::StoreLink(const TwoStopsLink &link, graph::EdgeId edge) {
-    auto iter  = edge_to_stoplink_.find(edge);
-    if (iter != edge_to_stoplink_.end()) {
-        return iter->first;
-    }
-
-    stoplink_to_edge_[link] = edge;
-    edge_to_stoplink_[edge] = link;
-
-    return edge;
-}
-
-double TransportCatalogueGraph::CalculateTimeForDistance(int distance) const {
-    return static_cast<double>(distance) / (rs_.bus_velocity * transport_catalogue::MET_MIN_RATIO);
-}
-
-graph::VertexId TransportCatalogueGraph::GetStopVertexId(std::string_view stop_name) const {
-    StopOnRoute stop{0, stop_name, {}};
-    auto iter = stop_to_vertex_.find(stop);
-
-    if (iter != stop_to_vertex_.end()) {
-        return iter->second; // return the stop vertex number, if it exists in the map
-    }
-
-    throw std::logic_error("Error, no stop name: " + std::string (stop_name));
-}
-
-const TransportCatalogueGraph::StopOnRoute& TransportCatalogueGraph::GetStopById(graph::VertexId id) const {
-    return vertex_to_stop_.at(id);
-}
-
-double TransportCatalogueGraph::GetBusWaitingTime() const {
-    return static_cast<double>(rs_.bus_wait_time);
-}
-
-const TwoStopsLink& TransportCatalogueGraph::GetLinkById(graph::EdgeId id) const {
-    auto iter = edge_to_stoplink_.find(id);
-
-    if (iter != edge_to_stoplink_.end()) {
-        return iter->second;
-    }
-
-    throw std::logic_error("Error fetching the TwoStopsLink, no Edge id: " + std::to_string(id));
 }

@@ -1,51 +1,53 @@
 #pragma once
+
+#include <utility>
 #include <string>
-#include "geo.h"
 #include <vector>
 #include <set>
+#include <optional>
 
-namespace transport_catalogue {
+namespace domain {
+
+    enum class BusType {
+        REVERSE,
+        CIRCULAR
+    };
 
     struct Stop {
-        std::string stop_name;
-        geo::Coordinates coordinates;
+        Stop(std::string name, double lat, double lon)
+                : name_(std::move(name)), latitude_(lat), longitude_(lon) {}
+
+        std::string name_;
+        double latitude_;
+        double longitude_;
     };
 
-    struct StopDistanceData {
-        std::string other_stop_name;
-        size_t distance;
+    struct Bus {
+        Bus(std::string name, std::vector<const Stop*> stops, size_t unique_stops, BusType type)
+                : name_(std::move(name)), stops_(std::move(stops)), unique_stops_(unique_stops), type_(type) {}
+
+        std::string name_;
+        std::vector<const Stop*> stops_;
+        size_t unique_stops_;
+        BusType type_;
     };
 
-    struct StopWithDistances : Stop {
-        std::vector<StopDistanceData> distances;
+    struct RawBus {
+        std::string name_;
+        std::vector<std::string> stops_;
+        BusType type_;
     };
-
-    const Stop EMPTY_STOP{};
-
-    enum RouteType {
-        NOT_SET,
-        CIRCLE_ROUTE,
-        RETURN_ROUTE
-    };
-
-    struct BusRoute {
-        std::string bus_name;
-        RouteType type;
-        std::vector<const Stop *> route_stops;
-    };
-
-    const BusRoute EMPTY_BUS_ROUTE{};
-    const std::set<std::string_view> EMPTY_BUS_ROUTE_SET{};
 
     struct BusInfo {
-        std::string_view bus_name;
-        RouteType type;
-        size_t stops_number;
-        size_t unique_stops;
-        size_t route_length;
-        double curvature;
+        std::string_view name_;
+        int stops_on_route_;
+        int unique_stops_;
+        int route_length_road_;
+        double curvature_;
     };
 
-    std::ostream &operator<<(std::ostream &os, const BusInfo &bi);
-
+    struct StopInfo {
+        std::string_view name_;
+        const std::set<std::string_view>* buses_;
+    };
 }
