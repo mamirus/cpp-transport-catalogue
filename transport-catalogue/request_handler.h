@@ -1,38 +1,49 @@
 #pragma once
 
+#include <memory>
+
+#include "json_builder.h"
+#include "map_renderer.h"
+#include "serialization.h"
 #include "transport_catalogue.h"
 #include "transport_router.h"
-#include "map_renderer.h"
-#include "json.h"
+
+namespace transport {
 
 class RequestHandler {
 public:
-    using OptionalBusInfo = const std::optional<domain::BusInfo>;
-    using OptionalStopInfo = const std::optional<domain::StopInfo>;
-    
-    explicit RequestHandler(const transport_catalogue::TransportCatalogue& transport_catalogue,
-                            renderer::RenderSettings& render_settings,
-                            transport_router::RoutingSettings routing_settings)
-    : transport_catalogue_(transport_catalogue),
-      renderer_(render_settings, std::move(transport_catalogue.GetValidCoordinates()),
-                             transport_catalogue.GetSortedBuses(),
-                             transport_catalogue.GetSortedStops()),
-      router_(routing_settings, transport_catalogue_) {}
+    using Route = route::TransportRouter::TransportRoute;
 
-    [[nodiscard]] OptionalBusInfo GetBusStat(std::string_view bus_name) const;
-    [[nodiscard]] OptionalStopInfo GetBusesByStop(std::string_view stop_name) const;
-    void Render(std::ostream& out) const;
-    std::optional<transport_router::EdgeDescriptions> BuildOptimalRoute(std::string_view stop_from, std::string_view stop_to) const;
+    RequestHandler(const TransportCatalogue& db);
+
+    std::optional<BusStat> GetBusStat(const std::string& bus_name) const;
+
+    const std::set<std::string_view>* GetBusesThroughStop(const std::string& stop_name) const;
+
+    const svg::Document& RenderMap() const;
+    std::optional<RequestHandler::Route> BuildRoute(const std::string &from, const std::string &to) const;
+
+    json::Document GetJsonResponse(const json::Array& requests) const;
+
+
+    bool SetRouter() const;
+    bool ResetRouter() const;
+    void SetRenderer(renderer::RenderSettings render_settings);
+
+    void Serialize(serialize::Settings settings, 
+        std::optional<renderer::RenderSettings> render_settings, 
+        std::optional<route::RouteSettings> route_settings);
+
+    void Deserialize(serialize::Settings settings);
 
 private:
-    const transport_catalogue::TransportCatalogue& transport_catalogue_;
-    renderer::MapRenderer renderer_;
-    transport_router::TransportRouter router_;
+    const TransportCatalogue& db_;
+
+    mutable std::unique_ptr<route::TransportRouter> router_;
+    std::unique_ptr<renderer::MapRenderer> renderer_;
+
+    std::optional<route::RouteSettings> routing_settings_;
 };
 
-json::Array MakeBusesArray(domain::StopInfo& stop_info);
-json::Node MakeErrorResponse(const json::Dict* query);
-json::Node MakeJSONStopResponse(domain::StopInfo& stop_info, const json::Dict* query);
-json::Node MakeJSONBusResponse(domain::BusInfo& bus_info, const json::Dict* query);
-json::Node MakeJSONMapResponse(const std::string& str, const json::Dict* query);
-json::Node MakeJSONRouteResponse(const transport_router::EdgeDescriptions& route_description, const json::Dict* query);
+
+} // transport

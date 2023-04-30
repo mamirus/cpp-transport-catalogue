@@ -1,53 +1,65 @@
 #pragma once
 
-#include <utility>
+/*
+ * В этом файле вы можете разместить классы/структуры, которые являются частью предметной области (domain)
+ * вашего приложения и не зависят от транспортного справочника. Например Автобусные маршруты и Остановки. 
+ *
+ * Их можно было бы разместить и в transport_catalogue.h, однако вынесение их в отдельный
+ * заголовочный файл может оказаться полезным, когда дело дойдёт до визуализации карты маршрутов:
+ * визуализатор карты (map_renderer) можно будет сделать независящим от транспортного справочника.
+ *
+ * Если структура вашего приложения не позволяет так сделать, просто оставьте этот файл пустым.
+ *
+ */
+
 #include <string>
-#include <vector>
+#include <unordered_map>
 #include <set>
-#include <optional>
+#include <vector>
 
-namespace domain {
+#include "geo.h"
 
-    enum class BusType {
-        REVERSE,
-        CIRCULAR
-    };
+namespace transport {
 
-    struct Stop {
-        Stop(std::string name, double lat, double lon)
-                : name_(std::move(name)), latitude_(lat), longitude_(lon) {}
+struct BusStat {
+    int all_stops;
+    int unique_stops;
+    unsigned int length;
+    double curvature;
+};
 
-        std::string name_;
-        double latitude_;
-        double longitude_;
-    };
+struct Stop {
+    std::string name;
+    geo::Coordinates coordinates;
+    std::set<std::string_view> buses_through;
+    int id;
+};
 
-    struct Bus {
-        Bus(std::string name, std::vector<const Stop*> stops, size_t unique_stops, BusType type)
-                : name_(std::move(name)), stops_(std::move(stops)), unique_stops_(unique_stops), type_(type) {}
+struct Bus {
+    std::string name;
+    std::vector<Stop*> bus_stops;
+    bool circular;
+};
 
-        std::string name_;
-        std::vector<const Stop*> stops_;
-        size_t unique_stops_;
-        BusType type_;
-    };
+namespace parsed {
 
-    struct RawBus {
-        std::string name_;
-        std::vector<std::string> stops_;
-        BusType type_;
-    };
+struct Bus {
+    std::string name;
+    std::vector<std::string> stops;
+    bool circular;
+};
 
-    struct BusInfo {
-        std::string_view name_;
-        int stops_on_route_;
-        int unique_stops_;
-        int route_length_road_;
-        double curvature_;
-    };
+struct Distances {
+    std::string from;
+    std::unordered_map<std::string, int> d_map;
+};
 
-    struct StopInfo {
-        std::string_view name_;
-        const std::set<std::string_view>* buses_;
-    };
-}
+struct Stop {
+    std::string name;
+    double lat;
+    double lng;
+};
+
+} // parsed
+
+} // transport

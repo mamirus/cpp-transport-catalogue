@@ -1,100 +1,72 @@
 #pragma once
 
-#include <iostream>
-#include <vector>
-#include <deque>
 #include "json.h"
 
 namespace json {
+    
+class ItemContext;
+class KeyItemContext;
+class KeyValueItemContext;
+class DictItemContext;
+class ArrayItemContext;
+    
+class Builder {
+        
+private:
+    Node root_;
+    std::vector<Node*> path_;
+    int opened_arrays_ = 0;
+    int opened_dicts_ = 0;
+    std::string last_key_;
+    bool has_key = false;
+    bool ready_ = false;
+public:
+    DictItemContext StartDict();
+    ArrayItemContext  StartArray();
+    KeyItemContext  Key(std::string);
 
-    class Builder {
-    private:
-        class DictItemContext;
-        class ArrayItemContext;
-        class KeyItemContext;
-        class ValueAfterArrayContext;
-        class ValueAfterKeyContext;
-        class ItemContext;
+    Builder& Value(JsonValue);
+    Builder& EndDict();
+    Builder& EndArray();
 
-        template<typename T>
-        void StartData(T obj);
-        void EndData();
-        Node root_ = nullptr;
-        std::vector<Node*> nodes_stack_;
-        std::deque<Node> nodes_;
+    const Node& Build();
+};
+    
+class ItemContext {
+public:
+    ItemContext(Builder* builder) : builder_{builder} {}
+protected:
+    KeyItemContext Key(std::string key);
+    DictItemContext StartDict();
+    Builder& EndDict();
+    ArrayItemContext StartArray();
+    Builder& EndArray();
 
-    public:
-        Builder& Key(std::string key);
-        Builder& Value(Node::Value value);
-        DictItemContext StartDict();
-        ArrayItemContext StartArray();
-        Builder& EndDict();
-        Builder& EndArray();
-        json::Node Build();
+    Builder* builder_;
+};
+    
+class DictItemContext : public ItemContext {
+public:
+    using ItemContext::ItemContext;
+    using ItemContext::Key;
+    using ItemContext::EndDict;
+};
 
-    };
-
-    class Builder::ItemContext {
-    public:
-        ItemContext(Builder& builder) : builder_(builder) {};
-        ValueAfterArrayContext Value(Node::Value value);
-        DictItemContext StartDict();
-        ArrayItemContext StartArray();
-        Builder& EndDict();
-        Builder& EndArray();
-    protected:
-        Builder& builder_;
-    };
-
-    class Builder::ValueAfterKeyContext : public ItemContext {
-    public:
-        KeyItemContext Key(std::string key);
-        ValueAfterArrayContext Value(Node::Value value) = delete;
-        Builder& EndArray() = delete;
-        DictItemContext StartDict() = delete;
-        ArrayItemContext StartArray() = delete;
-    };
-
-    class Builder::ValueAfterArrayContext : public ItemContext {
-    public:
-        Builder& EndDict() = delete;
-    };
-
-    class Builder::KeyItemContext : public ItemContext {
-    public:
-        ValueAfterKeyContext Value(Node::Value value);
-        Builder& EndDict() = delete;
-        Builder& EndArray() = delete;
-    };
-
-    class Builder::DictItemContext : public ItemContext {
-    public:
-        KeyItemContext Key(std::string key);
-        ValueAfterArrayContext Value(Node::Value value) = delete;
-        Builder& EndArray() = delete;
-        DictItemContext StartDict() = delete;
-        ArrayItemContext StartArray() = delete;
-    };
-
-    class Builder::ArrayItemContext : public ItemContext {
-    public:
-        Builder& EndDict() = delete;
-    };
-
-    template<typename T>
-    void Builder::StartData(T obj) {
-        std::string str;
-        if constexpr (std::is_same<T, Array>::value) {
-            str = "Array";
-        } else {
-            str = "Dict";
-        }
-        if (root_ != nullptr) throw std::logic_error("calling Start" + str + "-method for ready object");
-        if (nodes_stack_.empty() || nodes_stack_.back()->IsArray() || nodes_stack_.back()->IsString()) {
-            nodes_.emplace_back(obj);
-            nodes_stack_.push_back(&nodes_.back());
-        } else {
-            throw std::logic_error("calling Start" + str + "-method in wrong place");
-        }
-    }
-}
+class ArrayItemContext : public ItemContext {
+public:
+    using ItemContext::ItemContext;
+    ArrayItemContext Value(JsonValue);
+    using ItemContext::StartDict;
+    using ItemContext::StartArray;
+    using ItemContext::EndArray;
+};
+    
+class KeyItemContext : public ItemContext {
+public:
+    using ItemContext::ItemContext;
+    DictItemContext Value(JsonValue);
+    using ItemContext::StartDict;
+    using ItemContext::StartArray;
+};
+    
+} // json

@@ -1,250 +1,177 @@
+#include <sstream>
+
 #include "svg.h"
-#include <iomanip>
 
 namespace svg {
 
-    using namespace std::literals;
+using namespace std::literals;
 
-    void Object::Render(const RenderContext& context) const {
-        context.RenderIndent();
+void Object::Render(const RenderContext& context) const {
+    context.RenderIndent();
 
-        // Делегируем вывод тега своим подклассам
-        RenderObject(context);
+    // Делегируем вывод тега своим подклассам
+    RenderObject(context);
 
-        context.out << std::endl;
-    }
+    context.out << std::endl;
+}
 
 // ---------- Circle ------------------
 
-    Circle& Circle::SetCenter(Point center)  {
-        center_ = center;
-        return *this;
-    }
+Circle& Circle::SetCenter(Point center)  {
+    center_ = center;
+    return *this;
+}
 
-    Circle& Circle::SetRadius(double radius)  {
-        radius_ = radius;
-        return *this;
-    }
+Circle& Circle::SetRadius(double radius)  {
+    radius_ = radius;
+    return *this;
+}
 
-    void Circle::RenderObject(const RenderContext& context) const {
-        auto& out = context.out;
-        out << "<circle cx=\""sv << std::setprecision(6) << center_.x << "\" cy=\""sv << center_.y << "\" "sv;
-        out << "r=\""sv << std::setprecision(6) << radius_ << "\""sv;
-
-        RenderAttrs(out);
-
-        out << "/>"sv;
-    }
-
-
-// ---------- Polyline ------------------
-    Polyline& Polyline::AddPoint(svg::Point point) {
-        points_.emplace_back(std::move(point));
-
-        return *this;
-    }
-
-    void Polyline::RenderObject(const svg::RenderContext &context) const {
-        auto& out = context.out;
-
-        out << "<polyline points=\""sv;
-        for (auto iter = points_.begin(); iter != points_.end(); ++iter) {
-            auto [x, y] = *iter;
-            out << std::setprecision(6) << x << ","sv << y;
-            if (std::next(iter) != points_.end()) {
-                out << " "sv;
-            }
+void Circle::RenderObject(const RenderContext& context) const {
+    auto& out = context.out;
+    out << "<circle cx=\""sv << center_.x << "\" cy=\""sv << center_.y << "\" "sv;
+    out << "r=\""sv << radius_ << "\" "sv;
+    RenderAttrs(out);
+    out << "/>"sv;
+}
+    
+// ---------- Polyline ------------------   
+    
+Polyline& Polyline::AddPoint(Point point) {
+    points_.push_back(std::move(point));
+    
+    return *this;
+}
+    
+void Polyline::RenderObject(const RenderContext& context) const {
+    auto& out = context.out;
+    
+    out << "<polyline points=\""sv;
+        
+    for (size_t i = 0; i < points_.size(); ++i) {
+        if (i > 0) {
+            out << " "sv;
         }
-        out << "\""sv;
-
-        RenderAttrs(out);
-
-        out << "/>"sv;
+        
+        out << points_[i].x << ","sv << points_[i].y;
     }
-
-
+    
+    out << "\" ";
+    
+    RenderAttrs(out);
+        
+    out << "/>";
+}
+    
 // ---------- Text ------------------
-
-    Text& Text::SetPosition(Point pos) {
-        position_ = pos;
-
-        return *this;
-    }
-
-    Text& Text::SetOffset(Point offset) {
-        offset_ = offset;
-
-        return *this;
-    }
-
-    Text& Text::SetFontSize(uint32_t size) {
-        font_size_ = size;
-
-        return *this;
-    }
-
-    Text& Text::SetFontFamily(std::string font_family) {
-        font_family_ = font_family;
-
-        return *this;
-    }
-
-    Text& Text::SetFontWeight(std::string font_weight) {
-        font_weight_ = font_weight;
-
-        return *this;
-    }
-
-    Text& Text::SetData(std::string data) {
-        text_data_ = data;
-
-        return *this;
-    }
-
-    void Text::RenderObject(const RenderContext &context) const {
-        auto& out = context.out;
-        out << "<text"sv;
-
-        RenderAttrs(out);
-
-        // text position and offset
-        out << std::setprecision(6) << " x=\""sv << position_.x << "\" y=\""sv << position_.y
-            << "\" dx=\""sv << offset_.x << "\" dy=\""sv << offset_.y << "\""sv;
-
-        // font size
-        out << " font-size=\""sv << font_size_ << "\""sv;
-
-        // font family
-        if (!font_family_.empty()) {
-            out << " font-family=\""sv << font_family_ << "\""sv;
+    
+std::string escape(std::string_view src) {
+    std::stringstream dst;
+    for (char ch : src) {
+        switch (ch) {
+            case '&': dst << "&amp;"; break;
+            case '\'': dst << "&apos;"; break;
+            case '"': dst << "&quot;"; break;
+            case '<': dst << "&lt;"; break;
+            case '>': dst << "&gt;"; break;
+            default: dst << ch; break;
         }
-
-        // font weight
-        if (!font_weight_.empty()) {
-            out << " font-weight=\""sv << font_weight_ << "\""sv;
-        }
-
-        // end of text tag
-        out << ">"sv;
-
-        for (char c : text_data_) {
-            out << CheckAndScreenCharacter(c);
-        }
-
-        out << "</text>"sv;
     }
-
-    std::string Text::CheckAndScreenCharacter(char c) const {
-        std::string out_c;
-
-        switch (c) {
-            case '\"':
-                out_c = "&quot;"s;
-                break;
-            case '\'':
-                out_c = "&apos;"s;
-                break;
-            case '<':
-                out_c = "&lt;"s;
-                break;
-            case '>':
-                out_c = "&gt;"s;
-                break;
-            case '&':
-                out_c = "&amp;"s;
-                break;
-            default:
-                out_c = c;
-        }
-
-        return out_c;
+    return dst.str();
+}
+    
+Text& Text::SetPosition(Point pos) {
+    pos_ = std::move(pos);
+    
+    return *this;
+}
+    
+Text& Text::SetOffset(Point offset) {
+    offset_ = std::move(offset);
+    
+    return *this;
+}
+    
+Text& Text::SetFontSize(uint32_t size) {
+    font_size_ = size;
+    
+    return *this;
+}
+    
+Text& Text::SetFontFamily(std::string font_family) {
+    font_family_ = std::move(font_family);
+    
+    return *this;
+}
+    
+Text& Text::SetFontWeight(std::string font_weight) {
+    font_weight_ = std::move(font_weight);
+    
+    return *this;
+}
+    
+Text& Text::SetData(std::string data) {
+    data_ = std::move(escape(data));
+    
+    return *this;
+}
+    
+void Text::RenderObject(const RenderContext& context) const {
+    auto& out = context.out;
+    out << "<text x=\""sv << pos_.x << "\" y=\""sv << pos_.y << "\" "sv;
+    out << "dx=\""sv << offset_.x  << "\" dy=\""sv << offset_.y << "\" "sv;
+    out << "font-size=\""sv << font_size_ << "\"";
+    if (font_family_) {
+        out << " font-family=\""sv << *font_family_ << "\""sv;
     }
-
+    
+    if (font_weight_) {
+        out << " font-weight=\""sv << *font_weight_  << "\""sv;
+    }
+    
+    RenderAttrs(out);
+    
+    out << ">"sv;
+    out << data_ << "</text>"sv;
+}
+    
 // ---------- Document ------------------
-    void Document::Render(std::ostream &out) const {
-        RenderContext context(out, 2, 2);
-
-        out << "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>"sv << std::endl;
-        out << "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\">"sv << std::endl;
-
-        for (auto iter = objects_ptrs_.begin(); iter != objects_ptrs_.end(); ++iter) {
-            (*iter)->Render(context);
-        }
-
-        out << "</svg>"sv;
+    
+void Document::AddPtr(std::unique_ptr<Object>&& obj) {
+    svg_objects_.emplace_back(std::move(obj));
+}
+    
+void Document::Render(std::ostream& out) const {
+    RenderContext ctx(out, 2, 2);
+    
+    out << "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>"sv << std::endl;
+    out << "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\">"sv << std::endl;
+    
+    for (auto& svg_obj : svg_objects_) {
+        svg_obj->Render(ctx);
     }
+    
+    out << "</svg>"sv; 
+}
 
-
-// ---------- StrokeLineCap ------------------
-    std::ostream& operator<<(std::ostream& out, const StrokeLineCap& slc) {
-        using namespace std::literals;
-        switch (slc) {
-            case StrokeLineCap::BUTT:
-                out << "butt"s;
-                break;
-            case StrokeLineCap::ROUND:
-                out << "round"s;
-                break;
-            case StrokeLineCap::SQUARE:
-                out << "square"s;
-                break;
-        }
-
-        return out;
-    }
-
-// ---------- StrokeLineJoin ------------------
-    std::ostream& operator<<(std::ostream& out, const StrokeLineJoin& slj) {
-        using namespace std::literals;
-        switch (slj) {
-            case StrokeLineJoin::ARCS:
-                out << "arcs"s;
-                break;
-            case StrokeLineJoin::BEVEL:
-                out << "bevel"s;
-                break;
-            case StrokeLineJoin::MITER:
-                out << "miter"s;
-                break;
-            case StrokeLineJoin::MITER_CLIP:
-                out << "miter-clip"s;
-                break;
-            case StrokeLineJoin::ROUND:
-                out << "round"s;
-                break;
-        }
-
-        return out;
-    }
-
-    std::ostream& operator<<(std::ostream &out, const Rgb &color) {
-        using namespace std::literals;
-        out << "rgb("s << std::to_string(color.red) << ","s << std::to_string(color.green) << ","s << std::to_string(color.blue) << ")"s;
-        return out;
-    }
-
-    std::ostream& operator<<(std::ostream &out, const Rgba &color) {
-        using namespace std::literals;
-        out << "rgba("s << std::to_string(color.red) << ","s << std::to_string(color.green) << ","s << std::to_string(color.blue) << ","s << color.opacity << ")"s;
-        return out;
-    }
-
-    std::ostream& operator<<(std::ostream& out, const Color& color) {
-        using namespace std::literals;
-
-        std::visit([&out](Color value){
-            if (std::holds_alternative<std::monostate>(value)){
-                out << NoneColor;
-            } else if (const auto* val1 = std::get_if<std::string>(&value)){
-                out << *val1;
-            } else if (const auto* val2 = std::get_if<Rgb>(&value)) {
-                out << *val2;
-            } else if (const auto* val3 = std::get_if<Rgba>(&value)) {
-                out << *val3;
-            }
-        }, color);
-
-        return out;
-    }
-
+void ColorPrinter::operator()(std::monostate) const {
+    out << "none"sv;
+}
+void ColorPrinter::operator()(std::string color) const {
+    out << color;
+}
+void ColorPrinter::operator()(Rgb color) const {
+    out << "rgb("sv << int(color.red) << ","sv << int(color.green)
+        << ","sv << int(color.blue) << ")"sv;
+}
+void ColorPrinter::operator()(Rgba color) const {
+    out << "rgba("sv << int(color.red) << ","sv << int(color.green)
+        << ","sv << int(color.blue) << ","sv << color.opacity << ")"sv;
+}
+    
+std::ostream& operator<<(std::ostream &out, Color color) {
+    std::visit(ColorPrinter{out}, color);
+    return out;
+}
+    
 }  // namespace svg

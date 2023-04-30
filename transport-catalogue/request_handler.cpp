@@ -1,96 +1,263 @@
+#include <sstream>
+
 #include "request_handler.h"
-#include "json_builder.h"
 
-RequestHandler::OptionalBusInfo RequestHandler::GetBusStat(std::string_view bus_name) const {
-    return transport_catalogue_.GetBusInfo(std::string (bus_name));
+/*
+ * Здесь можно было бы разместить код обработчика запросов к базе, содержащего логику, которую не
+ * хотелось бы помещать ни в transport_catalogue, ни в json reader.
+ *
+ * Если вы затрудняетесь выбрать, что можно было бы поместить в этот файл,
+ * можете оставить его пустым.
+ */
+
+using namespace std;
+
+namespace transport {
+
+ RequestHandler::RequestHandler(const TransportCatalogue& db) : db_(db){
 }
 
-RequestHandler::OptionalStopInfo RequestHandler::GetBusesByStop(std::string_view stop_name) const {
-    return transport_catalogue_.GetStopInfo(std::string (stop_name));
-}
+void RequestHandler::SetRenderer(renderer::RenderSettings settings) {
+    vector<geo::Coordinates> all_coords;
 
-void RequestHandler::Render(std::ostream& out) const {
-    renderer_.Render(out);
-}
+    vector<const Bus*> buses;
 
-std::optional<transport_router::EdgeDescriptions> RequestHandler::BuildOptimalRoute(std::string_view stop_from, std::string_view stop_to) const {
-    return router_.BuildRoute(stop_from, stop_to);
-}
+    auto comp = [] (const Stop* a, const Stop* b) {
+        return a->name < b->name;
+    };
 
-json::Array MakeBusesArray(domain::StopInfo& stop_info) {
-    if (stop_info.buses_ == nullptr) return {};
-    json::Array buses;
-    buses.reserve(stop_info.buses_->size());
-    for (auto bus : *stop_info.buses_) {
-        buses.emplace_back(std::string(bus));
-    }
-    return buses;
-}
+    set<const Stop*, decltype(comp)> stops(comp);
 
-json::Node MakeErrorResponse(const json::Dict* query) {
-    return json::Builder{}.StartDict()
-                              .Key("request_id").Value(query->at("id").GetValue())
-                              .Key("error_message").Value("not found")
-                          .EndDict()
-                      .Build();
-}
+    for (auto el : *db_.GetBusNames()) {
+                
+        buses.push_back(db_.GetBus(el));
+        
+        const auto& bus_stops = db_.GetBus(el)->bus_stops;
 
-json::Node MakeJSONStopResponse(domain::StopInfo& stop_info, const json::Dict* query) {
-    json::Array buses = MakeBusesArray(stop_info);
-    return json::Builder{}.StartDict()
-                                .Key("buses").Value(buses)
-                                .Key("request_id").Value(query->at("id").GetValue())
-                           .EndDict()
-                       .Build();
-}
-
-json::Node MakeJSONBusResponse(domain::BusInfo& bus_info, const json::Dict* query) {
-    return json::Builder{}.StartDict()
-                                .Key("curvature").Value(bus_info.curvature_)
-                                .Key("request_id").Value(query->at("id").GetValue())
-                                .Key("route_length").Value(bus_info.route_length_road_)
-                                .Key("stop_count").Value(bus_info.stops_on_route_)
-                                .Key("unique_stop_count").Value(bus_info.unique_stops_)
-                           .EndDict()
-                       .Build();
-}
-
-json::Node MakeJSONMapResponse(const std::string& str, const json::Dict* query) {
-    return json::Builder{}.StartDict()
-                                .Key("map").Value(str)
-                                .Key("request_id").Value(query->at("id").GetValue())
-                          .EndDict()
-                      .Build();
-}
-
-json::Node MakeJSONRouteResponse(const transport_router::EdgeDescriptions& route_description, const json::Dict* query) {
-    json::Array items;
-    double total_time = 0.0;
-    for (auto description : route_description) {
-        total_time += description.time_;
-        if (description.type_ == transport_router::EdgeType::WAIT) {
-            json::Node dict = json::Builder{}.StartDict()
-                                                 .Key("type").Value("Wait")
-                                                 .Key("stop_name").Value(std::string (description.edge_name_))
-                                                 .Key("time").Value(description.time_)
-                                             .EndDict()
-                                         .Build();
-            items.push_back(dict);
-        } else if (description.type_ == transport_router::EdgeType::BUS) {
-            json::Node dict = json::Builder{}.StartDict()
-                                                 .Key("type").Value("Bus")
-                                                 .Key("bus").Value(std::string (description.edge_name_))
-                                                 .Key("span_count").Value(description.span_count_.value())
-                                                 .Key("time").Value(description.time_)
-                                             .EndDict()
-                                         .Build();
-            items.push_back(dict);
+        for (const auto stop : bus_stops) {
+            all_coords.push_back(stop->coordinates);
+            stops.insert(stop);
         }
     }
-    return json::Builder{}.StartDict()
-                                .Key("request_id").Value(query->at("id").GetValue())
-                                .Key("total_time").Value(total_time)
-                                .Key("items").Value(items)
-                          .EndDict()
-                      .Build();
+
+    SphereProjector proj(all_coords.begin(), all_coords.end(), 
+        settings.width, 
+        settings.height, 
+        settings.padding);
+
+    all_coords.clear();
+
+    vector<const Stop*> stops_vec(make_move_iterator(stops.begin()), 
+        make_move_iterator(stops.end()));
+
+    renderer_ = make_unique<renderer::MapRenderer>(move(proj), move(settings), move(buses), move(stops_vec));
 }
+
+optional<BusStat> RequestHandler::GetBusStat(const string& bus_name) const {
+    return db_.GetBusStat(bus_name);
+}
+
+const set<string_view>* RequestHandler::GetBusesThroughStop(const string& stop_name) const {
+    return db_.GetBusesThroughStop(stop_name);
+}
+
+const svg::Document& RequestHandler::RenderMap() const {
+    renderer_->AddLinesToSvg();
+    renderer_->AddBusLabelsToSvg();
+    renderer_->AddStopSymToSvg();
+    renderer_->AddStopLabelsToSvg();
+
+    return renderer_->GetSvgDoc();
+}
+
+bool RequestHandler::ResetRouter() const {
+    if (routing_settings_) {
+        router_ = std::make_unique<route::TransportRouter>(db_, routing_settings_.value());
+        return true;
+    } else {
+        std::cerr << "Can't find routing settings"s << std::endl;
+        return false;
+    }
+}
+
+bool RequestHandler::SetRouter() const {
+    if (!router_) {
+        return ResetRouter();
+    }
+    return true;
+}
+
+std::optional<RequestHandler::Route>
+RequestHandler::BuildRoute(const std::string &from, const std::string &to) const {
+    if (!SetRouter()) {
+        return std::nullopt;
+    } else {
+        return router_->BuildRoute(from, to);
+    }
+}
+
+json::Document RequestHandler::GetJsonResponse(const json::Array& requests) const {
+    auto response_builder = json::Builder{};
+    
+    auto arr_ctx = response_builder.StartArray();
+    
+    for (const auto& item : requests) {
+
+        const auto& dict = item.AsDict();
+
+        int id = dict.at("id"s).AsInt();
+        const string& type = dict.at("type"s).AsString();
+
+        if (type == "Bus"s) {
+            const string& name = dict.at("name"s).AsString();
+            const auto bus_stat_opt = GetBusStat(name);
+
+            if (!bus_stat_opt) {     
+                arr_ctx.StartDict()
+                    .Key("request_id"s)
+                    .Value(id)
+                    .Key("error_message"s)
+                    .Value("not found"s)
+                    .EndDict();
+                continue;
+            }
+
+            const auto& bus_stat = bus_stat_opt.value();
+
+            arr_ctx.StartDict()
+                .Key("request_id"s)
+                .Value(id)
+                .Key("curvature"s)
+                .Value(bus_stat.curvature)
+                .Key("stop_count"s)
+                .Value(bus_stat.all_stops)
+                .Key("unique_stop_count"s)
+                .Value(bus_stat.unique_stops)
+                .Key("route_length"s)
+                .Value(static_cast<int>(bus_stat.length))
+                .EndDict();
+        } else if (type == "Stop"s) {
+            const string& name = dict.at("name"s).AsString();
+            auto stop_buses = GetBusesThroughStop(name);
+
+            if (!stop_buses) {
+                arr_ctx.StartDict()
+                    .Key("request_id"s)
+                    .Value(id)
+                    .Key("error_message"s)
+                    .Value("not found"s)
+                    .EndDict();
+                continue;
+            }
+            
+            arr_ctx.StartDict()
+                .Key("request_id"s)
+                .Value(id)
+                .Key("buses"s)
+                .StartArray();
+
+            for (string_view bus: *stop_buses) {
+                arr_ctx.Value(string(bus));
+            }
+            
+            arr_ctx.EndArray().EndDict();        
+        } else if (type == "Map"s) {
+            stringstream map_string;
+
+            const auto& svg_doc = RenderMap();
+            svg_doc.Render(map_string);
+                 
+            arr_ctx.StartDict()
+                .Key("request_id"s)
+                .Value(id)
+                .Key("map"s)
+                .Value(map_string.str())
+                .EndDict();
+        } else if (type == "Route"s) {
+            auto route_data = BuildRoute(dict.at("from"s).AsString(), dict.at("to"s).AsString());
+
+            if (!route_data) {
+                arr_ctx.StartDict()
+                    .Key("request_id"s)
+                    .Value(id)
+                    .Key("error_message"s)
+                    .Value("not found"s)
+                    .EndDict();
+                continue;
+            }
+
+            double total_time = 0;
+            int wait_time = router_->GetSettings().bus_wait_time;
+            json::Array items;
+
+            for (const auto &edge : route_data.value()) {
+                total_time += edge.total_time;
+
+                json::Node wait_elem = json::Builder{}.StartDict().
+                    Key("type"s).Value("Wait"s).
+                    Key("stop_name"s).Value(std::string(edge.stop_from)).
+                    Key("time"s).Value(wait_time).
+                    EndDict().Build();
+                
+                json::Node ride_elem = json::Builder{}.StartDict().
+                    Key("type"s).Value("Bus"s).
+                    Key("bus"s).Value(std::string(edge.bus_name)).
+                    Key("span_count"s).Value(edge.span_count).
+                    Key("time"s).Value(edge.total_time - wait_time).
+                    EndDict().Build();
+                
+                items.push_back(wait_elem);
+                items.push_back(ride_elem);
+            }
+            
+            arr_ctx.StartDict()
+                .Key("request_id"s).Value(id)
+                .Key("total_time"s).Value(total_time)
+                .Key("items"s).Value(items)
+                .EndDict();
+        } else {
+            throw invalid_argument("wrong query to catalogue"s);
+        }
+    }
+
+    return json::Document(arr_ctx.EndArray().Build());
+}
+
+void RequestHandler::Serialize(serialize::Settings settings, 
+    optional<renderer::RenderSettings> render_settings,
+    optional<route::RouteSettings> route_settings) {
+    
+    serialize::Serializator serializator(settings);
+
+    serializator.SaveTransportCatalogue(db_);
+
+    if (render_settings) {
+       serializator.SaveRenderSettings(move(render_settings.value())); 
+    }
+
+    if (route_settings) {
+        router_ = std::make_unique<route::TransportRouter>(db_, route_settings.value());
+        router_->InitRouter();
+        serializator.SaveTransportRouter(*router_.get());
+    }
+
+    serializator.Serialize();
+}
+
+void RequestHandler::Deserialize(serialize::Settings settings) {
+    serialize::Serializator serializator(settings);
+    
+    optional<renderer::RenderSettings> render_settings;
+
+    serializator.Deserialize(const_cast<TransportCatalogue&>(db_), render_settings, router_);
+
+    if (router_) {
+        routing_settings_ = router_->GetSettings();
+    }
+
+    if (render_settings) {
+        SetRenderer(render_settings.value());
+    }
+}
+
+} // transport

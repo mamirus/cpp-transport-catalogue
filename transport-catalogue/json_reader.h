@@ -1,48 +1,50 @@
 #pragma once
 
-#include "json.h"
-#include "transport_catalogue.h"
-#include "request_handler.h"
+#include <iostream>
+
 #include "map_renderer.h"
+#include "transport_catalogue.h"
+#include "json.h"
+#include "request_handler.h"
+#include "serialization.h"
 #include "transport_router.h"
-#include <vector>
-#include <unordered_set>
-#include <utility>
 
-namespace reader {
-    using namespace std::string_literals;
+namespace transport {
 
-    struct SortedJSONQueries {
-        std::unordered_set<const json::Dict*> stops_queries_;
-        std::unordered_set<const json::Dict*> buses_queries_;
-        transport_router::RoutingSettings routing_settings_;
-        std::vector<const json::Dict*> stat_requests_;
-        renderer::RenderSettings render_settings_;
-    };
+class JsonReader {
+private:
+    json::Document json_doc_{json::Node{nullptr}};
 
-    json::Document ReadJSON(std::istream& input);
+    const json::Array& GetBaseRequests() const;
 
-    void ParseBaseRequests(const json::Node& data, SortedJSONQueries& queries);
-    void ParseStatRequests(const json::Node& data, SortedJSONQueries& queries);
-    void ParseRenderSettings(const json::Node& data, SortedJSONQueries& queries);
-    void ParseRoutingSettings(const json::Node& data, SortedJSONQueries& queries);
+    const json::Dict& GetRenderSettingsJson() const;
 
-    SortedJSONQueries ParseJSON(json::Document& doc);
+    const json::Array& GetStatRequests() const; 
 
-    void AddStopsFromJSON(transport_catalogue::TransportCatalogue& transport_catalogue, std::unordered_set<const json::Dict*>& queries);
-    void AddStopsDistancesFromJSON(transport_catalogue::TransportCatalogue& transport_catalogue, std::unordered_set<const json::Dict*>& queries);
-    void AddBusesFromJSON(transport_catalogue::TransportCatalogue& transport_catalogue, std::unordered_set<const json::Dict*>& queries);
+    svg::Color GetColorFromNode(const json::Node& n) const;
 
-    svg::Point MakeOffset(const json::Array& values);
-    svg::Color MakeColorForSVG(const json::Node& node);
-    std::vector<svg::Color> MakeArrayOfColors(const json::Array& array);
+    renderer::RenderSettings DictToRenderSettings(const json::Dict& settings_dict) const;
 
-    void FillTransportCatalogue(transport_catalogue::TransportCatalogue& transport_catalogue,
-                                std::unordered_set<const json::Dict*>& stop_queries,
-                                std::unordered_set<const json::Dict*>& bus_queries);
+    parsed::Bus DictToBus(const json::Dict& bus_dict) const;
 
-    json::Node ProcessStopQuery(RequestHandler& request_handler, const json::Dict* query);
-    json::Node ProcessBusQuery(RequestHandler& request_handler, const json::Dict* query);
-    json::Node ProcessRouteQuery(RequestHandler& request_handler, const json::Dict* query);
-    json::Document ProcessStatRequests(RequestHandler& request_handler, std::vector<const json::Dict*>& stat_queries);
-}
+    std::pair<parsed::Stop, parsed::Distances> DictToStopDists(const json::Dict& stop_dict) const;
+
+public:
+    JsonReader(std::istream& input);
+
+    route::RouteSettings GetRouteSettings() const;
+
+    serialize::Settings GetSerializeSettings() const;
+
+    std::optional<renderer::RenderSettings> GetRenderSettings() const;
+
+    std::optional<route::RouteSettings> GetRouteSettingsOpt() const;
+
+    bool HasRenderSettings() const; 
+
+    void FillCatalogue(TransportCatalogue& catalogue) const;
+
+    void PrintJsonResponse(const RequestHandler& handler, std::ostream& out) const;
+};
+
+} // transport
